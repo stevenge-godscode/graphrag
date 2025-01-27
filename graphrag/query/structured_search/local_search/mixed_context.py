@@ -193,13 +193,13 @@ class LocalSearchMixedContext(LocalContextBuilder):
         local_context, local_context_data = self._build_local_context(
             selected_entities=selected_entities,
             max_tokens=local_tokens,
+            top_k_relationships=top_k_relationships,
             include_entity_rank=include_entity_rank,
             rank_description=rank_description,
             include_relationship_weight=include_relationship_weight,
-            top_k_relationships=top_k_relationships,
             relationship_ranking_attribute=relationship_ranking_attribute,
-            return_candidate_context=return_candidate_context,
             column_delimiter=column_delimiter,
+            return_candidate_context=return_candidate_context,
         )
         if local_context.strip() != "":
             final_context.append(str(local_context))
@@ -378,44 +378,50 @@ class LocalSearchMixedContext(LocalContextBuilder):
         self,
         selected_entities: list[Entity],
         max_tokens: int = 8000,
-        include_entity_rank: bool = False,
-        rank_description: str = "relationship count",
-        include_relationship_weight: bool = False,
         top_k_relationships: int = 10,
+        include_entity_rank: bool = True,
+        rank_description: str = "number of relationships",
+        include_relationship_weight: bool = False,
         relationship_ranking_attribute: str = "rank",
-        return_candidate_context: bool = False,
         column_delimiter: str = "|",
-    ) -> tuple[str, dict[str, pd.DataFrame]]:
-        """Build data context for local search prompt combining entity/relationship/covariate tables."""
-        # build entity context
+        return_candidate_context: bool = False,
+    ) -> tuple[str, dict]:
+        """Build local context for the selected entities."""
+        # 构建实体上下文
         entity_context, entity_context_data = build_entity_context(
             selected_entities=selected_entities,
             token_encoder=self.token_encoder,
             max_tokens=max_tokens,
-            column_delimiter=column_delimiter,
             include_entity_rank=include_entity_rank,
             rank_description=rank_description,
-            context_name="Entities",
+            column_delimiter=column_delimiter,
         )
         entity_tokens = num_tokens(entity_context, self.token_encoder)
 
-        # build relationship-covariate context
-        added_entities = []
-        final_context = []
-        final_context_data = {}
-
-        # gradually add entities and associated metadata to the context until we reach limit
-        for entity in selected_entities:
-            current_context = []
-            current_context_data = {}
-            added_entities.append(entity)
-
-            # build relationship context
-            (
-                relationship_context,
-                relationship_context_data,
-            ) = build_relationship_context(
-                selected_entities=added_entities,
+        # 将实体分成多个批次
+        batch_size = max(1, (max_tokens - entity_tokens) // 2000)  # 估算每个实体大约需要2000个token
+        entity_batches = [selected_entities[i:i + batch_size] for i in range(0, len(selected_entities), batch_size)]
+        
+        log.info("Processing entities in batches:")
+        log.info(f"Total entities: {len(selected_entities)}")
+        log.info(f"Batch size: {batch_size}")
+        log.info(f"Number of batches: {len(entity_batches)}")
+        
+        all_context_parts = []
+        all_context_data = {}
+        
+        # 处理每个批次
+        for batch_idx, batch_entities in enumerate(entity_batches, 1):
+            log.info(f"Processing batch {batch_idx}/{len(entity_batches)} with {len(batch_entities)} entities")
+            
+            # 构建当前批次的上下文
+            batch_context = []
+            batch_context_data = {}
+            
+            # 构建关系上下文
+            log.info(f"Building relationships for batch {batch_idx}")
+            relationship_context, relationship_context_data = build_relationship_context(
+                selected_entities=batch_entities,
                 relationships=list(self.relationships.values()),
                 token_encoder=self.token_encoder,
                 max_tokens=max_tokens,
@@ -423,42 +429,43 @@ class LocalSearchMixedContext(LocalContextBuilder):
                 top_k_relationships=top_k_relationships,
                 include_relationship_weight=include_relationship_weight,
                 relationship_ranking_attribute=relationship_ranking_attribute,
-                context_name="Relationships",
+                context_name=f"Relationships (Batch {batch_idx})",
             )
-            current_context.append(relationship_context)
-            current_context_data["relationships"] = relationship_context_data
-            total_tokens = entity_tokens + num_tokens(
-                relationship_context, self.token_encoder
-            )
-
-            # build covariate context
+            batch_context.append(relationship_context)
+            batch_context_data["relationships"] = relationship_context_data
+            
+            # 构建协变量上下文
             for covariate in self.covariates:
+                log.info(f"Building {covariate} for batch {batch_idx}")
                 covariate_context, covariate_context_data = build_covariates_context(
-                    selected_entities=added_entities,
+                    selected_entities=batch_entities,
                     covariates=self.covariates[covariate],
                     token_encoder=self.token_encoder,
                     max_tokens=max_tokens,
                     column_delimiter=column_delimiter,
-                    context_name=covariate,
+                    context_name=f"{covariate} (Batch {batch_idx})",
                 )
-                total_tokens += num_tokens(covariate_context, self.token_encoder)
-                current_context.append(covariate_context)
-                current_context_data[covariate.lower()] = covariate_context_data
+                batch_context.append(covariate_context)
+                batch_context_data[covariate.lower()] = covariate_context_data
+            
+            # 合并批次数据
+            log.info(f"Merging batch {batch_idx} data")
+            all_context_parts.extend(batch_context)
+            for key, value in batch_context_data.items():
+                if key not in all_context_data:
+                    all_context_data[key] = value
+                else:
+                    # 合并 DataFrame
+                    all_context_data[key] = pd.concat([all_context_data[key], value], ignore_index=True)
+                    log.info(f"Merged {key} data, total rows: {len(all_context_data[key])}")
 
-            if total_tokens > max_tokens:
-                log.info("Reached token limit - reverting to previous context state")
-                break
-
-            final_context = current_context
-            final_context_data = current_context_data
-
-        # attach entity context to final context
-        final_context_text = entity_context + "\n\n" + "\n\n".join(final_context)
-        final_context_data["entities"] = entity_context_data
+        log.info("Building final context")
+        # 构建最终上下文
+        final_context_text = entity_context + "\n\n" + "\n\n".join(all_context_parts)
+        all_context_data["entities"] = entity_context_data
 
         if return_candidate_context:
-            # we return all the candidate entities/relationships/covariates (not only those that were fitted into the context window)
-            # and add a tag to indicate which records were included in the context window
+            # 处理候选上下文
             candidate_context_data = get_candidate_context(
                 selected_entities=selected_entities,
                 entities=list(self.entities.values()),
@@ -470,22 +477,18 @@ class LocalSearchMixedContext(LocalContextBuilder):
             )
             for key in candidate_context_data:
                 candidate_df = candidate_context_data[key]
-                if key not in final_context_data:
-                    final_context_data[key] = candidate_df
-                    final_context_data[key]["in_context"] = False
+                if key not in all_context_data:
+                    all_context_data[key] = candidate_df
+                    all_context_data[key]["in_context"] = False
                 else:
-                    in_context_df = final_context_data[key]
-
+                    in_context_df = all_context_data[key]
                     if "id" in in_context_df.columns and "id" in candidate_df.columns:
-                        candidate_df["in_context"] = candidate_df[
-                            "id"
-                        ].isin(  # cspell:disable-line
-                            in_context_df["id"]
-                        )
-                        final_context_data[key] = candidate_df
+                        candidate_df["in_context"] = candidate_df["id"].isin(in_context_df["id"])
+                        all_context_data[key] = candidate_df
                     else:
-                        final_context_data[key]["in_context"] = True
+                        all_context_data[key]["in_context"] = True
         else:
-            for key in final_context_data:
-                final_context_data[key]["in_context"] = True
-        return (final_context_text, final_context_data)
+            for key in all_context_data:
+                all_context_data[key]["in_context"] = True
+
+        return final_context_text, all_context_data
