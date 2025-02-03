@@ -111,10 +111,10 @@ def get_global_search_engine(
 
         dynamic_community_selection_kwargs.update({
             "llm": get_llm(config),
-            "token_encoder": tiktoken.encoding_for_model(config.llm.model),
+            "token_encoder": tiktoken.encoding_for_model("gpt-4"),
             "keep_parent": gs_config.dynamic_search_keep_parent,
             "num_repeats": gs_config.dynamic_search_num_repeats,
-            "use_summary": gs_config.dynamic_search_use_summary,
+            "use_summary": True,
             "concurrent_coroutines": gs_config.dynamic_search_concurrent_coroutines,
             "threshold": gs_config.dynamic_search_threshold,
             "max_level": gs_config.dynamic_search_max_level,
