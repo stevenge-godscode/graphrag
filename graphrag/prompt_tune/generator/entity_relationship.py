@@ -13,6 +13,7 @@ from graphrag.prompt_tune.prompt.entity_relationship import (
     ENTITY_RELATIONSHIPS_GENERATION_PROMPT,
     UNTYPED_ENTITY_RELATIONSHIPS_GENERATION_PROMPT,
 )
+from graphrag.utils.prompts import *
 
 MAX_EXAMPLES = 5
 
@@ -63,6 +64,6 @@ async def generate_entity_relationship_examples(
     responses = await asyncio.gather(*tasks)
 
     return [
-        json.dumps(response.json or "") if json_mode else str(response.output.content)
+        json.dumps(response.json or "") if json_mode else remove_think_tag(str(response.output.content))
         for response in responses
     ]

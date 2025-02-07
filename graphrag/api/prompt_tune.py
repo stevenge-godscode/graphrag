@@ -42,6 +42,7 @@ from graphrag.prompt_tune.generator.language import detect_language
 from graphrag.prompt_tune.generator.persona import generate_persona
 from graphrag.prompt_tune.loader.input import MIN_CHUNK_SIZE, load_docs_in_chunks
 from graphrag.prompt_tune.types import DocSelectionType
+from graphrag.utils.prompts import *
 
 
 @validate_call
@@ -104,32 +105,34 @@ async def generate_indexing_prompts(
 
     if not domain:
         logger.info("Generating domain...")
-        domain = await generate_domain(llm, doc_list)
+        domain = remove_think_tag(await generate_domain(llm, doc_list))
         logger.info(f"Generated domain: {domain}")  # noqa
 
     if not language:
         logger.info("Detecting language...")
-        language = await detect_language(llm, doc_list)
+        language = remove_think_tag(await detect_language(llm, doc_list))
 
     logger.info("Generating persona...")
-    persona = await generate_persona(llm, domain)
+    persona = remove_think_tag(await generate_persona(llm, domain))
 
     logger.info("Generating community report ranking description...")
-    community_report_ranking = await generate_community_report_rating(
-        llm, domain=domain, persona=persona, docs=doc_list
+    community_report_ranking = remove_think_tag(await generate_community_report_rating(
+            llm, domain=domain, persona=persona, docs=doc_list
+        )
     )
 
     entity_types = None
     if discover_entity_types:
         logger.info("Generating entity types...")
-        entity_types = await generate_entity_types(
-            llm,
-            domain=domain,
-            persona=persona,
-            docs=doc_list,
-            json_mode=config.llm.model_supports_json or False,
+        entity_types = remove_think_tag(
+            await generate_entity_types(
+                llm,
+                domain=domain,
+                persona=persona,
+                docs=doc_list,
+                json_mode=config.llm.model_supports_json or False,
+            )
         )
-
     logger.info("Generating entity relationship examples...")
     examples = await generate_entity_relationship_examples(
         llm,
@@ -139,36 +142,46 @@ async def generate_indexing_prompts(
         language=language,
         json_mode=False,  # config.llm.model_supports_json should be used, but these prompts are used in non-json mode by the index engine
     )
+    
+    
 
     logger.info("Generating entity extraction prompt...")
-    entity_extraction_prompt = create_entity_extraction_prompt(
-        entity_types=entity_types,
-        docs=doc_list,
-        examples=examples,
-        language=language,
-        json_mode=False,  # config.llm.model_supports_json should be used, but these prompts are used in non-json mode by the index engine
-        encoding_model=config.encoding_model,
-        max_token_count=max_tokens,
-        min_examples_required=min_examples_required,
+    entity_extraction_prompt = remove_think_tag(
+        create_entity_extraction_prompt(
+            entity_types=entity_types,
+            docs=doc_list,
+            examples=examples,
+            language=language,
+            json_mode=False,  # config.llm.model_supports_json should be used, but these prompts are used in non-json mode by the index engine
+            encoding_model=config.encoding_model,
+            max_token_count=max_tokens,
+            min_examples_required=min_examples_required,
+        )
     )
 
     logger.info("Generating entity summarization prompt...")
-    entity_summarization_prompt = create_entity_summarization_prompt(
-        persona=persona,
-        language=language,
+    entity_summarization_prompt = remove_think_tag(
+            create_entity_summarization_prompt(
+            persona=persona,
+            language=language,
+        )
     )
 
     logger.info("Generating community reporter role...")
-    community_reporter_role = await generate_community_reporter_role(
-        llm, domain=domain, persona=persona, docs=doc_list
+    community_reporter_role = remove_think_tag(
+            await generate_community_reporter_role(
+            llm, domain=domain, persona=persona, docs=doc_list
+        )
     )
 
     logger.info("Generating community summarization prompt...")
-    community_summarization_prompt = create_community_summarization_prompt(
-        persona=persona,
-        role=community_reporter_role,
-        report_rating_description=community_report_ranking,
-        language=language,
+    community_summarization_prompt = remove_think_tag(
+            create_community_summarization_prompt(
+            persona=persona,
+            role=community_reporter_role,
+            report_rating_description=community_report_ranking,
+            language=language,
+        )
     )
 
     return (
