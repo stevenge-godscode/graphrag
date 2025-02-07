@@ -30,6 +30,7 @@ DEFAULT_ENTITY_TYPES = ["organization", "person", "geo", "event"]
 
 log = logging.getLogger(__name__)
 
+from graphrag.utils.prompts import *
 
 @dataclass
 class GraphExtractionResult:
@@ -158,7 +159,16 @@ class GraphExtractor:
                 self._input_text_key: text,
             }),
         )
-        results = response.output.content or ""
+        results = ""
+
+        try:
+            response.output.content = remove_think_tag(response.output.content or "")
+            results = response.output.content or ""
+            if len(response.history) > 1 and hasattr(response.history[1], 'content') and response.history[1].content:
+                response.history[1].content = remove_think_tag(response.history[1].content)
+        except (IndexError, AttributeError) as e:
+            # 记录异常或进行适当处理
+            print(f"Error processing response history: {e}")
 
         # Repeat to ensure we maximize entity count
         for i in range(self._max_gleanings):
@@ -167,7 +177,14 @@ class GraphExtractor:
                 name=f"extract-continuation-{i}",
                 history=response.history,
             )
-            results += response.output.content or ""
+            try:
+                response.output.content = remove_think_tag(response.output.content or "")
+                results = response.output.content or ""
+                if len(response.history) > 1 and hasattr(response.history[1], 'content') and response.history[1].content:
+                    response.history[1].content = remove_think_tag(response.history[1].content)
+            except (IndexError, AttributeError) as e:
+                # 记录异常或进行适当处理
+                print(f"Error processing response history: {e}")
 
             # if this is the final glean, don't bother updating the continuation flag
             if i >= self._max_gleanings - 1:
@@ -179,6 +196,14 @@ class GraphExtractor:
                 history=response.history,
                 model_parameters=self._loop_args,
             )
+            try:
+                response.output.content = remove_think_tag(response.output.content or "")
+                results = response.output.content or ""
+                if len(response.history) > 1 and hasattr(response.history[1], 'content') and response.history[1].content:
+                    response.history[1].content = remove_think_tag(response.history[1].content)
+            except (IndexError, AttributeError) as e:
+                # 记录异常或进行适当处理
+                print(f"Error processing response history: {e}")
 
             if response.output.content != "Y":
                 break
