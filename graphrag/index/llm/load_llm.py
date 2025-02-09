@@ -28,6 +28,10 @@ from graphrag.index.llm.manager import ChatLLMSingleton, EmbeddingsLLMSingleton
 
 from .mock_llm import MockChatLLM
 
+from graphrag.extensions.deepseek.client import DeepSeekAsyncClient, DeepSeekClient
+from graphrag.extensions.deepseek.config import DeepSeekAIConfig
+from graphrag.extensions.deepseek.params import DeepSeekChatParameters
+
 if TYPE_CHECKING:
     from graphrag.cache.pipeline_cache import PipelineCache
     from graphrag.callbacks.workflow_callbacks import WorkflowCallbacks
@@ -183,6 +187,17 @@ def _load_openai_chat_llm(
         cache,
     )
 
+def _load_deepseek_chat_llm(
+    on_error: ErrorHandlerFn,
+    cache: LLMCache,
+    config: LLMParameters,
+    azure=False,
+):
+    return _create_deepseek_chat_llm(
+        _create_deepseek_config(config),
+        on_error,
+        cache,
+    )
 
 def _load_openai_embeddings_llm(
     on_error: ErrorHandlerFn,
@@ -251,11 +266,43 @@ def _create_openai_config(config: LLMParameters, azure: bool) -> OpenAIConfig:
         chat_parameters=chat_parameters,
     )
 
+def _create_deepseek_config(config: LLMParameters) -> DeepSeekAIConfig:
+    encoding_model = config.encoding_model or defs.ENCODING_MODEL
+    chat_parameters = DeepSeekChatParameters(
+        frequency_penalty=config.frequency_penalty,
+        presence_penalty=config.presence_penalty,
+        top_p=config.top_p,
+        max_tokens=config.max_tokens,
+        n=config.n,
+        temperature=config.temperature,
+    )
+
+    deepseek_config = DeepSeekAIConfig(
+        api_key=config.api_key,
+        base_url=config.api_base or "https://api.deepseek.com/v1",  # ✅ 确保 base_url 不是 None
+        organization=config.organization,
+        max_retries=config.max_retries,
+        max_retry_wait=config.max_retry_wait,
+        requests_per_minute=config.requests_per_minute,
+        tokens_per_minute=config.tokens_per_minute,
+        timeout=config.request_timeout,
+        max_concurrency=config.concurrent_requests,
+        model=config.model,
+        encoding=encoding_model,
+        chat_parameters=chat_parameters,
+    )
+    deepseek_config.chat_parameters["response_format"] = {"type": "json_object"}
+    return deepseek_config
+
+
 
 def _load_azure_openai_chat_llm(
     on_error: ErrorHandlerFn, cache: LLMCache, config: LLMParameters
 ):
     return _load_openai_chat_llm(on_error, cache, config, True)
+
+
+
 
 
 def _load_azure_openai_embeddings_llm(
@@ -294,6 +341,11 @@ loaders = {
         "load": _load_static_response,
         "chat": False,
     },
+        # ✅ 添加 DeepSeek R1 支持
+    LLMType.DeepSeekChat: {
+        "load": _load_deepseek_chat_llm,
+        "chat": True,
+    },
 }
 
 
@@ -305,6 +357,24 @@ def _create_openai_chat_llm(
     """Create an openAI chat llm."""
     client = create_openai_client(configuration)
     return create_openai_chat_llm(
+        configuration,
+        client=client,
+        cache=cache,
+        events=GraphRagLLMEvents(on_error),
+    )
+
+def _create_deepseek_chat_llm(
+    configuration: DeepSeekAIConfig,
+    on_error: ErrorHandlerFn,
+    cache: LLMCache,
+) -> ChatLLM:
+    """创建 DeepSeek R1 Chat LLM"""
+    # if "response_format" not in configuration.chat_parameters:
+    #     configuration.chat_parameters["response_format"] = {"type": "json_object"}
+
+
+    client = _create_deepseek_client(configuration)
+    return create_deepseek_chat_llm(
         configuration,
         client=client,
         cache=cache,
@@ -324,4 +394,18 @@ def _create_openai_embeddings_llm(
         client=client,
         cache=cache,
         events=GraphRagLLMEvents(on_error),
+    )
+
+from typing import cast
+def _create_deepseek_client(config: DeepSeekAIConfig) -> DeepSeekAsyncClient:
+    """创建 DeepSeek R1 客户端，确保 `response_format` 被正确传递。"""
+    
+    config = cast(DeepSeekAIConfig, config)
+
+    return DeepSeekAsyncClient(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        organization=config.organization,
+        timeout=config.timeout,
+        max_retries=0,
     )

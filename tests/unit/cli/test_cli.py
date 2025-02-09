@@ -1,5 +1,4 @@
 import pytest
-import os
 from pathlib import Path
 from dotenv import load_dotenv  # 用于加载 .env
 from graphrag.cli.prompt_tune import prompt_tune

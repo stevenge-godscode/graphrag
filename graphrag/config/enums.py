@@ -111,6 +111,9 @@ class LLMType(str, Enum):
     # Debug
     StaticResponse = "static_response"
 
+    
+    DeepSeekChat = "deepseek_chat"
+
     def __repr__(self):
         """Get a string representation."""
         return f'"{self.value}"'
